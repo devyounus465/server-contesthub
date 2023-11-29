@@ -1,8 +1,10 @@
 const express = require("express");
 require("dotenv").config();
 const jwt = require("jsonwebtoken");
+
 const cors = require("cors");
 const app = express();
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const port = process.env.PORT || 5000;
 
 // middle ware
@@ -34,6 +36,11 @@ async function run() {
       .db("contestHUB")
       .collection("newContest");
     const usersCollection = client.db("contestHUB").collection("users");
+    const paymentsCollection = client.db("contestHUB").collection("payments");
+    const winnersCollection = client.db("contestHUB").collection("winners");
+    const submissionCollection = client
+      .db("contestHUB")
+      .collection("submission");
 
     app.post("/jwt", async (req, res) => {
       const user = req.body;
@@ -277,6 +284,96 @@ async function run() {
       const id = req.params.id;
       const filter = { _id: new ObjectId(id) };
       const result = await usersCollection.deleteOne(filter);
+      res.send(result);
+    });
+
+    /**
+     * payment related =====> stripe
+     *
+     */
+
+    //   payment intent
+    app.post("/create-payment-intent", async (req, res) => {
+      const { price } = req.body;
+      const totalPrice = parseInt(price * 100);
+      console.log(totalPrice, "amout inside");
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount: totalPrice,
+        currency: "usd",
+        payment_method_types: ["card"],
+      });
+      res.send({ clientSecret: paymentIntent.client_secret });
+    });
+
+    //   payment details
+    app.post("/payments", async (req, res) => {
+      const payment = req.body;
+      console.log("payment info", payment);
+      const paymentResult = await paymentsCollection.insertOne(payment);
+      res.send({ paymentResult });
+    });
+
+    //   user get payment details
+    app.get("/payments/:email", verifyToken, async (req, res) => {
+      const query = { email: req.params.email };
+      if (req.params.email !== req.decoded.email) {
+        return res.status(403).send({ message: "Forbiddenaccess" });
+      }
+      const result = await paymentsCollection.find(query).toArray();
+      res.send(result);
+    });
+
+    /**
+     * contest submission data
+     */
+
+    app.get("/submission", async (req, res) => {
+      const result = await submissionCollection.find().toArray();
+      res.send(result);
+    });
+
+    app.get("/submission/:id", async (req, res) => {
+      const id = req.params.id;
+      const filter = { _id: new ObjectId(id) };
+      const result = await submissionCollection.findOne(filter);
+      res.send(result);
+    });
+    app.post("/submission", async (req, res) => {
+      const item = req.body;
+      const result = await submissionCollection.insertOne(item);
+      res.send(result);
+    });
+    app.patch("/submission/:id", async (req, res) => {
+      const id = req.params.id;
+      const filter = { contest_id: id };
+
+      const updateDoc = {
+        $set: {
+          status: "winner",
+        },
+      };
+      const result = await submissionCollection.updateOne(filter, updateDoc);
+      res.send(result);
+    });
+
+    /**
+     * winner collection
+     */
+
+    app.get("/winner/:email", verifyToken, async (req, res) => {
+      const email = req.params.email;
+      const query = { participant_email: email };
+      if (req.params.email !== req.decoded.email) {
+        return res.status(403).send({ message: "Forbiddenaccess" });
+      }
+      const result = await winnersCollection.find(query).toArray();
+      res.send(result);
+    });
+
+    app.post("/winner", async (req, res) => {
+      const winner = req.body;
+
+      const result = await winnersCollection.insertOne(winner);
       res.send(result);
     });
 
